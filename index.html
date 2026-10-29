@@ -130,6 +130,88 @@
   opacity: 0.7;
 }
 
+/* File Preview Modal */
+.preview-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.preview-content {
+  background: #ffffff;
+  color: #222222;
+  width: 100%;
+  max-width: 900px;
+  height: 85vh;
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+}
+
+.preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 1px solid #dddddd;
+  gap: 12px;
+}
+
+.preview-header h3 {
+  margin: 0;
+  font-size: 17px;
+  overflow-wrap: anywhere;
+}
+
+.preview-header button {
+  background: #222222;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.preview-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.preview-body img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.preview-body iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+
+.preview-body pre {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: Consolas, monospace;
+  font-size: 14px;
+  line-height: 1.6;
+  margin: 0;
+}
     
   </style>
 </head>
@@ -481,12 +563,30 @@ function renderFiles() {
     const name = document.createElement("span");
     name.textContent = getName(file);
 
-    const button = document.createElement("button");
-    button.textContent = "Download";
-    button.onclick = () => downloadFile(file.key || file.filename || file.name);
+    const actions = document.createElement("div");
+    actions.style.display = "flex";
+    actions.style.gap = "8px";
 
-    row.append(name, button);
-    list.appendChild(row);
+    const previewButton = document.createElement("button");
+    previewButton.textContent = "Preview";
+    previewButton.className = "secondary";
+    previewButton.onclick = () => previewFile(file);
+
+    const downloadButton = document.createElement("button");
+    downloadButton.textContent = "Download";
+    downloadButton.onclick = () =>
+      downloadFile(file.key || file.filename || file.name);
+
+const fileType = getType(file);
+
+if (["image", "pdf", "text"].includes(fileType)) {
+  actions.appendChild(previewButton);
+}
+
+actions.appendChild(downloadButton);
+
+row.append(name, actions);
+list.appendChild(row);
   });
 }
 
@@ -676,6 +776,84 @@ async function downloadFile(key) {
     alert("Download failed: " + error.message);
   }
 }
+  async function previewFile(file) {
+  const modal = document.getElementById("previewModal");
+  const title = document.getElementById("previewTitle");
+  const body = document.getElementById("previewBody");
+
+  const filename = file.filename || file.name || "File";
+  const key = file.key || file.filename || file.name;
+
+  title.textContent = filename;
+  body.textContent = "Loading preview...";
+
+  modal.style.display = "flex";
+
+  try {
+    const response = await fetch(
+      API + "/download?key=" + encodeURIComponent(key)
+    );
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      throw new Error(result.error || "Could not load file.");
+    }
+
+    const url = result.url || result.downloadUrl || result.download_url;
+
+    if (!url) {
+      throw new Error("Download URL was not returned.");
+    }
+
+    const fileType = filename.toLowerCase();
+
+    body.replaceChildren();
+
+    if (/\.(jpg|jpeg|png|gif|webp|svg|bmp|ico)$/i.test(fileType)) {
+      const image = document.createElement("img");
+      image.src = url;
+      image.alt = filename;
+      body.appendChild(image);
+    }
+
+    else if (/\.pdf$/i.test(fileType)) {
+      const pdf = document.createElement("iframe");
+      pdf.src = url;
+      pdf.title = filename;
+      body.appendChild(pdf);
+    }
+
+    else if (/\.(txt|md|csv|json|log|html|css|js|py|xml|yaml|yml)$/i.test(fileType)) {
+      const textResponse = await fetch(url);
+
+      if (!textResponse.ok) {
+        throw new Error("Could not read the text file.");
+      }
+
+      const content = await textResponse.text();
+
+      const pre = document.createElement("pre");
+      pre.textContent = content;
+      body.appendChild(pre);
+    }
+
+    else {
+      body.textContent = "Preview is not supported for this file type.";
+    }
+
+  } catch (error) {
+    body.textContent = "Preview failed: " + error.message;
+  }
+}
+
+function closePreview() {
+  const modal = document.getElementById("previewModal");
+  const body = document.getElementById("previewBody");
+
+  modal.style.display = "none";
+  body.replaceChildren();
+}
 
 document.getElementById("searchFiles").addEventListener("input", renderFiles);
 document.getElementById("filterType").addEventListener("change", renderFiles);
@@ -683,5 +861,18 @@ document.getElementById("sortFiles").addEventListener("change", renderFiles);
 
 loadFiles();
 </script>
+  <!-- File Preview Modal -->
+<div id="previewModal" class="preview-modal" style="display:none;">
+  <div class="preview-content">
+    <div class="preview-header">
+      <h3 id="previewTitle">File Preview</h3>
+      <button type="button" onclick="closePreview()">✕</button>
+    </div>
+
+    <div id="previewBody" class="preview-body">
+      Loading preview...
+    </div>
+  </div>
+</div>
 </body>
 </html>
