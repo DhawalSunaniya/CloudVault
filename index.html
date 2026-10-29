@@ -111,6 +111,25 @@
   }
 }
 
+#progressContainer {
+  margin-top: 16px;
+}
+
+#progressText {
+  margin-bottom: 8px;
+}
+
+#uploadProgress {
+  display: block;
+  accent-color: #76a9ff;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+#uploadProgress:indeterminate {
+  opacity: 0.7;
+}
+
     
   </style>
 </head>
@@ -125,9 +144,24 @@
   <section class="panel">
     <h2>Upload a file</h2>
     <p class="muted">Choose a file up to 4 MB.</p>
-    <input id="fileInput" type="file">
-    <button id="uploadBtn" onclick="uploadFile()">Upload file</button>
-    <div id="status" role="status"></div>
+    
+<input id="fileInput" type="file" aria-describedby="uploadHelp">
+<p id="uploadHelp" class="muted">
+  Maximum file size: 4 MB. Choose a file to upload.
+</p>
+
+<button id="uploadBtn" onclick="uploadFile()">Upload file</button>
+
+<div id="progressContainer" hidden>
+  <p id="progressText" class="muted" role="status">
+    Preparing upload...
+  </p>
+  <progress id="uploadProgress" value="0" max="100"
+    style="width:100%; height:18px;"></progress>
+</div>
+
+<div id="status" role="status" aria-live="polite"></div>
+
   </section>
 
   
@@ -343,54 +377,163 @@ function formatStorage(bytes) {
 }
 
 
-async function uploadFile() {
-  const input = document.getElementById("fileInput");
-  const button = document.getElementById("uploadBtn");
-  const status = document.getElementById("status");
-  const file = input.files[0];
 
+async function uploadFile() {
+  const fileInput = document.getElementById("fileInput");
+  const uploadBtn = document.getElementById("uploadBtn");
+  const status = document.getElementById("status");
+  const progressContainer = document.getElementById("progressContainer");
+  const progressText = document.getElementById("progressText");
+  const uploadProgress = document.getElementById("uploadProgress");
+
+  const file = fileInput.files[0];
+  const MAX_SIZE = 4 * 1024 * 1024; // 4 MB
+
+  // Clear the previous message.
+  status.textContent = "";
+
+  // Validate file selection.
   if (!file) {
     status.textContent = "Please choose a file first.";
     return;
   }
-  if (file.size > 4 * 1024 * 1024) {
-    status.textContent = "This file is larger than 4 MB. Choose a smaller file.";
+
+  // Validate file size before reading or uploading.
+  if (file.size > MAX_SIZE) {
+    status.textContent = "File is too large. The maximum size is 4 MB.";
     return;
   }
 
-  button.disabled = true;
-  status.textContent = "Uploading...";
+  // Validate the filename without changing it.
+  const filename = file.name.trim();
+
+  if (
+    !filename ||
+    /[/\\\u0000-\u001F\u007F]/.test(filename)
+  ) {
+    status.textContent = "Please choose a file with a valid filename.";
+    return;
+  }
+
+  uploadBtn.disabled = true;
+  fileInput.disabled = true;
+  progressContainer.hidden = false;
+  uploadProgress.value = 0;
+  progressText.textContent = "Preparing upload...";
+
   try {
+    // Convert the file to Base64, as required by the existing Lambda.
     const base64 = await new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = () => resolve(reader.result.split(",")[1]);
-      reader.onerror = () => reject(new Error("Could not read file"));
+
+      reader.onload = () => {
+        const dataUrl = reader.result;
+
+        if (typeof dataUrl !== "string" || !dataUrl.includes(",")) {
+          reject(new Error("Could not read the selected file."));
+          return;
+        }
+
+        resolve(dataUrl.split(",")[1]);
+      };
+
+      reader.onerror = () => {
+        reject(new Error("Could not read the selected file."));
+      };
+
+      reader.onabort = () => {
+        reject(new Error("File reading was cancelled."));
+      };
+
       reader.readAsDataURL(file);
     });
 
-    const response = await fetch(API + "/upload", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        filename: file.name,
+    progressText.textContent = "Uploading...";
+
+    // XMLHttpRequest lets us display upload progress.
+    const result = await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+
+      xhr.open("POST", API + "/upload");
+      xhr.setRequestHeader("Content-Type", "application/json");
+
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable && event.total > 0) {
+          const percent = Math.round(
+            (event.loaded / event.total) * 100
+          );
+
+          uploadProgress.value = percent;
+          progressText.textContent = `Uploading... ${percent}%`;
+        } else {
+          progressText.textContent = "Uploading...";
+        }
+      };
+
+      xhr.onload = () => {
+        let response;
+
+        try {
+          response = JSON.parse(xhr.responseText);
+        } catch {
+          reject(new Error("The server returned an unreadable response."));
+          return;
+        }
+
+        if (xhr.status < 200 || xhr.status >= 300) {
+          reject(
+            new Error(
+              response.error ||
+              response.message ||
+              `Upload failed (HTTP ${xhr.status}).`
+            )
+          );
+          return;
+        }
+
+        if (response.error) {
+          reject(new Error(response.error));
+          return;
+        }
+
+        resolve(response);
+      };
+
+      xhr.onerror = () => {
+        reject(
+          new Error("Network error. Check your connection and try again.")
+        );
+      };
+
+      xhr.onabort = () => {
+        reject(new Error("The upload was cancelled."));
+      };
+
+      xhr.send(JSON.stringify({
+        filename: filename,
         contentType: file.type || "application/octet-stream",
         fileBase64: base64
-      })
+      }));
     });
-    const result = await response.json();
-    if (!response.ok || result.error) {
-      throw new Error(result.error || "Upload failed");
-    }
 
-    status.textContent = "Upload successful!";
-    input.value = "";
+    uploadProgress.value = 100;
+    progressText.textContent = "Upload complete — 100%";
+    status.textContent = "File uploaded successfully.";
+
+    fileInput.value = "";
+
+    // Refresh the existing dashboard file list and statistics.
     await loadFiles();
+
   } catch (error) {
-    status.textContent = "Upload failed: " + error.message;
+    progressText.textContent = "Upload failed.";
+    status.textContent = error.message || "Upload failed. Please try again.";
   } finally {
-    button.disabled = false;
+    uploadBtn.disabled = false;
+    fileInput.disabled = false;
   }
 }
+
 
 async function downloadFile(key) {
   if (!key) {
