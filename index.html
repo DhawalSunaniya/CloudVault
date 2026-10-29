@@ -222,6 +222,27 @@
 
     
     <button class="secondary" onclick="loadFiles()">Refresh files</button>
+    
+    <div class="folder-section" style="margin-top:20px">
+      <h3>Folders</h3>
+
+      <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px">
+        <button type="button" class="secondary" onclick="goToParentFolder()">
+          ← Back
+        </button>
+
+        <button type="button" onclick="createFolder()">
+          + New Folder
+        </button>
+      </div>
+
+      <p id="folderBreadcrumb" class="muted">My Files</p>
+
+      <div id="folderList" style="display:grid; gap:10px">
+        Loading folders...
+      </div>
+    </div>
+
     <div id="fileList" style="margin-top:16px">Loading files...</div>
   </section>
 </main>
@@ -231,12 +252,18 @@ const API = "https://2spu0z92p7.execute-api.us-east-1.amazonaws.com";
 
 
 
+
 async function loadFiles() {
   const list = document.getElementById("fileList");
   list.textContent = "Loading...";
 
   try {
-    const response = await fetch(API + "/files");
+    const currentFolder = window.cloudVaultCurrentFolder || "";
+    const query = currentFolder
+      ? "?folder=" + encodeURIComponent(currentFolder)
+      : "";
+
+    const response = await fetch(API + "/files" + query);
     const data = await response.json();
 
     if (!response.ok) {
@@ -244,8 +271,13 @@ async function loadFiles() {
     }
 
     const files = data.files || [];
+    const folders = data.folders || [];
 
-    // Keep the dashboard statistics based on ALL files
+    // Save folders and the current location for folder navigation.
+    window.cloudVaultFolders = folders;
+    window.cloudVaultCurrentFolder = data.currentFolder || "";
+
+    // Update dashboard statistics for the currently displayed files.
     const totalStorage = files.reduce(
       (sum, file) => sum + (Number(file.size) || 0),
       0
@@ -260,12 +292,15 @@ async function loadFiles() {
       if (/\.(txt|md|csv|json|log|html|css|js|py|xml|yaml|yml)$/i.test(name)) {
         return "text";
       }
+
       if (/\.(jpg|jpeg|png|gif|webp|svg|bmp|ico)$/i.test(name)) {
         return "image";
       }
+
       if (/\.pdf$/i.test(name)) {
         return "pdf";
       }
+
       return "other";
     };
 
@@ -277,14 +312,100 @@ async function loadFiles() {
     document.getElementById("imageFiles").textContent =
       files.filter(file => getType(file) === "image").length;
 
-    // Save the latest file list for frontend-only searching and sorting
+    // Keep the existing search, filter, and sort functionality.
     window.cloudVaultFiles = files;
 
+    renderFolders();
     renderFiles();
   } catch (error) {
     list.textContent = "Could not load files: " + error.message;
   }
 }
+
+function renderFolders() {
+  const folderList = document.getElementById("folderList");
+  const breadcrumb = document.getElementById("folderBreadcrumb");
+
+  const folders = window.cloudVaultFolders || [];
+  const currentFolder = window.cloudVaultCurrentFolder || "";
+
+  breadcrumb.textContent = currentFolder
+    ? "My Files / " + currentFolder.split("/").join(" / ")
+    : "My Files";
+
+  folderList.replaceChildren();
+
+  if (folders.length === 0) {
+    folderList.textContent = "No folders here yet.";
+    return;
+  }
+
+  folders.forEach(folder => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "secondary";
+    button.style.textAlign = "left";
+    const folderName = folder.name.replace(/\/$/, "");
+    button.textContent = "📁 " + folderName;
+
+    button.addEventListener("click", () => {
+      window.cloudVaultCurrentFolder = currentFolder
+        ? currentFolder + "/" + folderName
+        : folderName;
+
+      loadFiles();
+    });
+
+    folderList.appendChild(button);
+  });
+}
+
+function goToParentFolder() {
+  const currentFolder = window.cloudVaultCurrentFolder || "";
+
+  if (!currentFolder) {
+    return;
+  }
+
+  const parts = currentFolder.split("/");
+  parts.pop();
+
+  window.cloudVaultCurrentFolder = parts.join("/");
+  loadFiles();
+}
+
+async function createFolder() {
+  const name = prompt("Enter a name for your new folder:");
+
+  if (name === null) {
+    return;
+  }
+
+  if (!name.trim()) {
+    alert("Please enter a folder name.");
+    return;
+  }
+
+  const response = await fetch(API + "/folders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: name.trim(),
+      parentFolder: window.cloudVaultCurrentFolder || ""
+    })
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    alert(data.error || "Could not create folder.");
+    return;
+  }
+
+  await loadFiles();
+  alert("Folder created successfully!");
+}
+
 
 function renderFiles() {
   const list = document.getElementById("fileList");
@@ -347,10 +468,12 @@ function renderFiles() {
   if (filtered.length === 0) {
     list.textContent = files.length
       ? "No files match your search or filter."
-      : "No files yet. Upload your first file!";
+      : (window.cloudVaultCurrentFolder
+          ? "This folder is empty. Upload a file or create a subfolder."
+          : "No files yet. Upload your first file!");
     return;
   }
-
+  
   filtered.forEach(file => {
     const row = document.createElement("div");
     row.className = "file";
@@ -512,7 +635,8 @@ async function uploadFile() {
       xhr.send(JSON.stringify({
         filename: filename,
         contentType: file.type || "application/octet-stream",
-        fileBase64: base64
+        fileBase64: base64,
+        folder: window.cloudVaultCurrentFolder || "",
       }));
     });
 
