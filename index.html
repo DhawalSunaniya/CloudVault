@@ -42,6 +42,43 @@
       .file { align-items: flex-start; flex-direction: column; }
       h1 { font-size: 28px; }
     }
+
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin: 16px 0 24px;
+}
+
+.stat-card {
+  background: #f5f7fb;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 18px;
+  min-width: 0;
+}
+
+.stat-card p {
+  margin: 0 0 10px;
+  color: #64748b;
+  font-size: 14px;
+}
+
+.stat-card h3 {
+  margin: 0;
+  color: #172554;
+  font-size: 26px;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 480px) {
+  .stats-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+    
   </style>
 </head>
 <body>
@@ -60,8 +97,36 @@
     <div id="status" role="status"></div>
   </section>
 
+  
+<section class="panel">
+    <h2>Storage Dashboard</h2>
+
+    <div class="stats-grid">
+      <div class="stat-card">
+        <p>Total Files</p>
+        <h3 id="totalFiles">0</h3>
+      </div>
+
+      <div class="stat-card">
+        <p>Storage Used</p>
+        <h3 id="totalStorage">0 Bytes</h3>
+      </div>
+
+      <div class="stat-card">
+        <p>Text Files</p>
+        <h3 id="textFiles">0</h3>
+      </div>
+
+      <div class="stat-card">
+        <p>Images</p>
+        <h3 id="imageFiles">0</h3>
+      </div>
+    </div>
+  </section>
+
   <section class="panel">
     <h2>Your files</h2>
+
     <button class="secondary" onclick="loadFiles()">Refresh files</button>
     <div id="fileList" style="margin-top:16px">Loading files...</div>
   </section>
@@ -70,15 +135,48 @@
 <script>
 const API = "https://2spu0z92p7.execute-api.us-east-1.amazonaws.com";
 
+
 async function loadFiles() {
   const list = document.getElementById("fileList");
   list.textContent = "Loading...";
+
   try {
     const response = await fetch(API + "/files");
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error || "Could not load files");
+
+    if (!response.ok) {
+      throw new Error(data.error || "Could not load files");
+    }
 
     const files = data.files || [];
+
+    // Calculate dashboard statistics
+    const totalFiles = files.length;
+    const totalStorage = files.reduce(
+      (sum, file) => sum + (Number(file.size) || 0),
+      0
+    );
+
+    const textFiles = files.filter(file => {
+      const name = file.filename || file.name || file.key || "";
+      return /\.(txt|md|csv|json|log|html|css|js|py)$/i.test(name);
+    }).length;
+
+    const imageFiles = files.filter(file => {
+      const name = file.filename || file.name || file.key || "";
+      return /\.(jpg|jpeg|png|gif|webp|svg|bmp|ico)$/i.test(name);
+    }).length;
+
+    // Update dashboard cards
+    document.getElementById("totalFiles").textContent = totalFiles;
+
+    document.getElementById("totalStorage").textContent =
+      formatStorage(totalStorage);
+
+    document.getElementById("textFiles").textContent = textFiles;
+    document.getElementById("imageFiles").textContent = imageFiles;
+
+    // Display the existing file list
     list.replaceChildren();
 
     if (!files.length) {
@@ -89,11 +187,15 @@ async function loadFiles() {
     files.forEach(file => {
       const row = document.createElement("div");
       row.className = "file";
+
       const name = document.createElement("span");
       name.textContent = file.filename || file.name || file.key || "File";
+
       const button = document.createElement("button");
       button.textContent = "Download";
-      button.onclick = () => downloadFile(file.key || file.filename || file.name);
+      button.onclick = () =>
+        downloadFile(file.key || file.filename || file.name);
+
       row.append(name, button);
       list.appendChild(row);
     });
@@ -101,6 +203,15 @@ async function loadFiles() {
     list.textContent = "Could not load files: " + error.message;
   }
 }
+
+function formatStorage(bytes) {
+  if (bytes < 1024) return bytes + " Bytes";
+  if (bytes < 1024 * 1024) {
+    return (bytes / 1024).toFixed(2) + " KB";
+  }
+  return (bytes / (1024 * 1024)).toFixed(2) + " MB";
+}
+
 
 async function uploadFile() {
   const input = document.getElementById("fileInput");
