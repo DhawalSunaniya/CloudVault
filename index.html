@@ -1,0 +1,175 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CloudVault | Secure File Storage</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: Arial, sans-serif; color: #eaf0ff;
+      background: linear-gradient(135deg, #10172a, #192d4b);
+      min-height: 100vh; padding: 32px 16px;
+    }
+    main { max-width: 760px; margin: auto; }
+    header { text-align: center; margin-bottom: 28px; }
+    .logo { font-size: 42px; }
+    h1 { margin: 8px 0; font-size: 34px; }
+    header p { color: #b8c6df; }
+    .panel {
+      background: #ffffff0d; border: 1px solid #ffffff20;
+      border-radius: 18px; padding: 24px; margin: 18px 0;
+    }
+    h2 { margin-top: 0; font-size: 20px; }
+    input[type=file] { width: 100%; margin: 12px 0; }
+    button {
+      background: #76a9ff; color: #10172a; border: 0;
+      border-radius: 9px; padding: 11px 16px;
+      font-weight: bold; cursor: pointer;
+    }
+    button:disabled { opacity: .5; cursor: wait; }
+    .secondary { background: #2a3c58; color: white; }
+    #status { white-space: pre-wrap; color: #b8d4ff; margin-top: 14px; }
+    .file {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; padding: 14px 0; border-bottom: 1px solid #ffffff20;
+      overflow-wrap: anywhere;
+    }
+    .file:last-child { border-bottom: 0; }
+    .muted { color: #b8c6df; font-size: 14px; }
+    @media(max-width: 480px) {
+      .file { align-items: flex-start; flex-direction: column; }
+      h1 { font-size: 28px; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="logo">☁️</div>
+    <h1>CloudVault</h1>
+    <p>Your simple cloud file storage</p>
+  </header>
+
+  <section class="panel">
+    <h2>Upload a file</h2>
+    <p class="muted">Choose a file up to 4 MB.</p>
+    <input id="fileInput" type="file">
+    <button id="uploadBtn" onclick="uploadFile()">Upload file</button>
+    <div id="status" role="status"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Your files</h2>
+    <button class="secondary" onclick="loadFiles()">Refresh files</button>
+    <div id="fileList" style="margin-top:16px">Loading files...</div>
+  </section>
+</main>
+
+<script>
+const API = "https://2spu0z92p7.execute-api.us-east-1.amazonaws.com";
+
+async function loadFiles() {
+  const list = document.getElementById("fileList");
+  list.textContent = "Loading...";
+  try {
+    const response = await fetch(API + "/files");
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Could not load files");
+
+    const files = data.files || [];
+    list.replaceChildren();
+
+    if (!files.length) {
+      list.textContent = "No files yet. Upload your first file!";
+      return;
+    }
+
+    files.forEach(file => {
+      const row = document.createElement("div");
+      row.className = "file";
+      const name = document.createElement("span");
+      name.textContent = file.filename || file.name || file.key || "File";
+      const button = document.createElement("button");
+      button.textContent = "Download";
+      button.onclick = () => downloadFile(file.key || file.filename || file.name);
+      row.append(name, button);
+      list.appendChild(row);
+    });
+  } catch (error) {
+    list.textContent = "Could not load files: " + error.message;
+  }
+}
+
+async function uploadFile() {
+  const input = document.getElementById("fileInput");
+  const button = document.getElementById("uploadBtn");
+  const status = document.getElementById("status");
+  const file = input.files[0];
+
+  if (!file) {
+    status.textContent = "Please choose a file first.";
+    return;
+  }
+  if (file.size > 4 * 1024 * 1024) {
+    status.textContent = "This file is larger than 4 MB. Choose a smaller file.";
+    return;
+  }
+
+  button.disabled = true;
+  status.textContent = "Uploading...";
+  try {
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(",")[1]);
+      reader.onerror = () => reject(new Error("Could not read file"));
+      reader.readAsDataURL(file);
+    });
+
+    const response = await fetch(API + "/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        filename: file.name,
+        contentType: file.type || "application/octet-stream",
+        fileBase64: base64
+      })
+    });
+    const result = await response.json();
+    if (!response.ok || result.error) {
+      throw new Error(result.error || "Upload failed");
+    }
+
+    status.textContent = "Upload successful!";
+    input.value = "";
+    await loadFiles();
+  } catch (error) {
+    status.textContent = "Upload failed: " + error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function downloadFile(key) {
+  if (!key) {
+    alert("The file key is missing. Check the Lambda /files response.");
+    return;
+  }
+  try {
+    const response = await fetch(API + "/download?key=" + encodeURIComponent(key));
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Download failed");
+
+    const url = result.url || result.downloadUrl || result.download_url;
+    if (!url) throw new Error("The API did not return a download URL.");
+    window.open(url, "_blank", "noopener");
+  } catch (error) {
+    alert("Download failed: " + error.message);
+  }
+}
+
+loadFiles();
+</script>
+</body>
+</html>
