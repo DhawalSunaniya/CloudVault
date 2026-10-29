@@ -79,6 +79,39 @@
 }
 
     
+.file-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.file-controls input,
+.file-controls select {
+  width: 100%;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #dbe2ea;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #172554;
+  font: inherit;
+  box-sizing: border-box;
+}
+
+.file-controls input:focus,
+.file-controls select:focus {
+  outline: 2px solid #93c5fd;
+  outline-offset: 2px;
+}
+
+@media (max-width: 600px) {
+  .file-controls {
+    grid-template-columns: 1fr;
+  }
+}
+
+    
   </style>
 </head>
 <body>
@@ -127,6 +160,33 @@
   <section class="panel">
     <h2>Your files</h2>
 
+
+<div class="file-controls">
+  <input
+    type="text"
+    id="searchFiles"
+    placeholder="Search files by name..."
+    aria-label="Search files by name"
+  />
+
+  <select id="filterType" aria-label="Filter files by type">
+    <option value="all">All file types</option>
+    <option value="text">Text files</option>
+    <option value="image">Images</option>
+    <option value="pdf">PDF files</option>
+    <option value="other">Other files</option>
+  </select>
+
+  <select id="sortFiles" aria-label="Sort files">
+    <option value="name-asc">Name: A–Z</option>
+    <option value="name-desc">Name: Z–A</option>
+    <option value="size-asc">Size: Smallest first</option>
+    <option value="size-desc">Size: Largest first</option>
+    <option value="newest">Newest first</option>
+  </select>
+</div>
+
+    
     <button class="secondary" onclick="loadFiles()">Refresh files</button>
     <div id="fileList" style="margin-top:16px">Loading files...</div>
   </section>
@@ -134,6 +194,7 @@
 
 <script>
 const API = "https://2spu0z92p7.execute-api.us-east-1.amazonaws.com";
+
 
 
 async function loadFiles() {
@@ -150,59 +211,128 @@ async function loadFiles() {
 
     const files = data.files || [];
 
-    // Calculate dashboard statistics
-    const totalFiles = files.length;
+    // Keep the dashboard statistics based on ALL files
     const totalStorage = files.reduce(
       (sum, file) => sum + (Number(file.size) || 0),
       0
     );
 
-    const textFiles = files.filter(file => {
-      const name = file.filename || file.name || file.key || "";
-      return /\.(txt|md|csv|json|log|html|css|js|py)$/i.test(name);
-    }).length;
+    const getName = file =>
+      file.filename || file.name || file.key || "File";
 
-    const imageFiles = files.filter(file => {
-      const name = file.filename || file.name || file.key || "";
-      return /\.(jpg|jpeg|png|gif|webp|svg|bmp|ico)$/i.test(name);
-    }).length;
+    const getType = file => {
+      const name = getName(file).toLowerCase();
 
-    // Update dashboard cards
-    document.getElementById("totalFiles").textContent = totalFiles;
+      if (/\.(txt|md|csv|json|log|html|css|js|py|xml|yaml|yml)$/i.test(name)) {
+        return "text";
+      }
+      if (/\.(jpg|jpeg|png|gif|webp|svg|bmp|ico)$/i.test(name)) {
+        return "image";
+      }
+      if (/\.pdf$/i.test(name)) {
+        return "pdf";
+      }
+      return "other";
+    };
 
+    document.getElementById("totalFiles").textContent = files.length;
     document.getElementById("totalStorage").textContent =
       formatStorage(totalStorage);
+    document.getElementById("textFiles").textContent =
+      files.filter(file => getType(file) === "text").length;
+    document.getElementById("imageFiles").textContent =
+      files.filter(file => getType(file) === "image").length;
 
-    document.getElementById("textFiles").textContent = textFiles;
-    document.getElementById("imageFiles").textContent = imageFiles;
+    // Save the latest file list for frontend-only searching and sorting
+    window.cloudVaultFiles = files;
 
-    // Display the existing file list
-    list.replaceChildren();
-
-    if (!files.length) {
-      list.textContent = "No files yet. Upload your first file!";
-      return;
-    }
-
-    files.forEach(file => {
-      const row = document.createElement("div");
-      row.className = "file";
-
-      const name = document.createElement("span");
-      name.textContent = file.filename || file.name || file.key || "File";
-
-      const button = document.createElement("button");
-      button.textContent = "Download";
-      button.onclick = () =>
-        downloadFile(file.key || file.filename || file.name);
-
-      row.append(name, button);
-      list.appendChild(row);
-    });
+    renderFiles();
   } catch (error) {
     list.textContent = "Could not load files: " + error.message;
   }
 }
+
+function renderFiles() {
+  const list = document.getElementById("fileList");
+  const files = window.cloudVaultFiles || [];
+
+  const search = document.getElementById("searchFiles").value
+    .trim()
+    .toLowerCase();
+
+  const filter = document.getElementById("filterType").value;
+  const sort = document.getElementById("sortFiles").value;
+
+  const getName = file =>
+    file.filename || file.name || file.key || "File";
+
+  const getType = file => {
+    const name = getName(file).toLowerCase();
+
+    if (/\.(txt|md|csv|json|log|html|css|js|py|xml|yaml|yml)$/i.test(name)) {
+      return "text";
+    }
+    if (/\.(jpg|jpeg|png|gif|webp|svg|bmp|ico)$/i.test(name)) {
+      return "image";
+    }
+    if (/\.pdf$/i.test(name)) {
+      return "pdf";
+    }
+    return "other";
+  };
+
+  const filtered = files.filter(file => {
+    const matchesSearch = getName(file).toLowerCase().includes(search);
+    const matchesType = filter === "all" || getType(file) === filter;
+    return matchesSearch && matchesType;
+  });
+
+  filtered.sort((a, b) => {
+    if (sort === "name-asc") {
+      return getName(a).localeCompare(getName(b));
+    }
+    if (sort === "name-desc") {
+      return getName(b).localeCompare(getName(a));
+    }
+    if (sort === "size-asc") {
+      return (Number(a.size) || 0) - (Number(b.size) || 0);
+    }
+    if (sort === "size-desc") {
+      return (Number(b.size) || 0) - (Number(a.size) || 0);
+    }
+    if (sort === "newest") {
+      const dateA = new Date(a.lastModified || a.last_modified || a.uploadedAt || 0).getTime() || 0;
+      const dateB = new Date(b.lastModified || b.last_modified || b.uploadedAt || 0).getTime() || 0;
+      return dateB - dateA;
+    }
+    return 0;
+  });
+
+  list.replaceChildren();
+
+  if (filtered.length === 0) {
+    list.textContent = files.length
+      ? "No files match your search or filter."
+      : "No files yet. Upload your first file!";
+    return;
+  }
+
+  filtered.forEach(file => {
+    const row = document.createElement("div");
+    row.className = "file";
+
+    const name = document.createElement("span");
+    name.textContent = getName(file);
+
+    const button = document.createElement("button");
+    button.textContent = "Download";
+    button.onclick = () => downloadFile(file.key || file.filename || file.name);
+
+    row.append(name, button);
+    list.appendChild(row);
+  });
+}
+
 
 function formatStorage(bytes) {
   if (bytes < 1024) return bytes + " Bytes";
@@ -279,6 +409,10 @@ async function downloadFile(key) {
     alert("Download failed: " + error.message);
   }
 }
+
+document.getElementById("searchFiles").addEventListener("input", renderFiles);
+document.getElementById("filterType").addEventListener("change", renderFiles);
+document.getElementById("sortFiles").addEventListener("change", renderFiles);
 
 loadFiles();
 </script>
